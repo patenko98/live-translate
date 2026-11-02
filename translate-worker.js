@@ -1,7 +1,10 @@
 // Opus-MT (ru<->en) in the browser via transformers.js (ONNX Runtime Web, int8). Runs in a worker.
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1';
 
-env.allowLocalModels = false;
+// The models are published next to the site (pinned, see models/README.md), never fetched from a third party at run time.
+env.allowRemoteModels = false;
+env.allowLocalModels = true;
+env.localModelPath = new URL('models/', self.location).href;
 const MODELS = { 'ru-en': 'Xenova/opus-mt-ru-en', 'en-ru': 'Xenova/opus-mt-en-ru' };
 const pipes = {};
 let ready = null; // both models loaded; translating while they are still loading corrupts the ONNX sessions
