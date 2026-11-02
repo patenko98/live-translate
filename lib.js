@@ -93,6 +93,9 @@ export function wsUrl(token, { sampleRate = 16000, vadSilence = 0.8, base = WS_B
   const q = new URLSearchParams({
     model_id: 'scribe_v2_realtime',
     audio_format: 'pcm_' + sampleRate,
+    // Auto-detection often takes Russian speech for Ukrainian: hint the two languages of the pair.
+    language_code: 'ru',
+    secondary_languages: 'en',
     commit_strategy: 'vad',
     vad_silence_threshold_secs: String(vadSilence),
     include_timestamps: 'false',
@@ -103,6 +106,19 @@ export function wsUrl(token, { sampleRate = 16000, vadSilence = 0.8, base = WS_B
 
 export function audioChunkMessage(base64, sampleRate = 16000, commit = false) {
   return JSON.stringify({ message_type: 'input_audio_chunk', audio_base_64: base64, commit, sample_rate: sampleRate });
+}
+
+/** On-screen diagnostics of a live session: one status line and, when something looks wrong, the likely cause. */
+export function diagText({ mtState, mtPct = 0, mtStalled = false, partials = 0, commits = 0, msSincePartial = 0, noCommitMs = 5000 }) {
+  const mt = mtState === 'ready' ? 'готов'
+    : mtState === 'error' ? 'ошибка'
+    : mtStalled ? 'загрузка не идёт'
+    : mtPct > 0 ? `загрузка ${mtPct}%` : 'загрузка';
+  const line = `Перевод: ${mt} · черновиков: ${partials} · фраз: ${commits}`;
+  let hint = '';
+  if (mtStalled) hint = 'Модели перевода не загружаются: проверьте Wi-Fi или закройте другие приложения и перезапустите.';
+  else if (partials > 0 && commits === 0 && msSincePartial >= noCommitMs) hint = 'Сервис распознавания не завершает фразу, хотя речь уже закончилась.';
+  return { line, hint };
 }
 
 /** At most one draft translation per [minIntervalMs] and only when the text grew/changed by >= [minWordDelta] words. */

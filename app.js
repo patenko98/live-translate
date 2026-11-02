@@ -1,7 +1,7 @@
 import {
   classify, opposite, splitSentences, parseEvent, wsUrl, audioChunkMessage, httpError, networkError,
   TOKEN_URL, PartialThrottle,
-  cleanTranslation, missingNumbers, parseGlossary, glossaryPre, glossaryRestore, glossaryPost,
+  cleanTranslation, missingNumbers, parseGlossary, glossaryPre, glossaryRestore, glossaryPost, diagText,
 } from './lib.js';
 
 const $ = (id) => document.getElementById(id);
@@ -20,6 +20,8 @@ const MAX_BUFFER_CHUNKS = 50; // 5 s of audio replayed after a reconnect
 const BACKOFF_MS = [500, 1000, 2000, 4000, 8000];
 const TOKEN_TIMEOUT_MS = 10000;
 const MT_TIMEOUT_PER_SENTENCE_MS = 20000;
+const MT_STALL_MS = 60000; // no sign of life from the model loader
+const NO_COMMIT_HINT_MS = 5000;
 const COMMIT_WAIT_MS = 1500;
 const AUTOSAVE_MS = 5000;
 const SAVE_KEY = 'wr_session';
@@ -37,11 +39,19 @@ let GLOS = { pre: [], post: [] };
 class Translator {
   constructor(onState) {
     this.onState = onState; this.state = 'idle'; this.pending = new Map(); this.seq = 0; this.files = new Map();
-    this.busy = 0; this.restarts = 0;
+    this.busy = 0; this.restarts = 0; this.pct = 0; this.stalled = false; this.stallTimer = null;
+  }
+  /** A killed worker (e.g. out of memory on iOS) reports nothing: flag a load that shows no sign of life. Not fatal. */
+  watchLoad() {
+    clearTimeout(this.stallTimer);
+    if (this.stalled) { this.stalled = false; this.onState('loading', this.pct); }
+    if (this.state !== 'loading') return;
+    this.stallTimer = setTimeout(() => { this.stalled = true; this.onState('stalled', this.pct); }, MT_STALL_MS);
   }
   init() {
     if (this.worker) return;
-    this.state = 'loading'; this.onState(this.state, 0);
+    this.state = 'loading'; this.pct = 0; this.onState(this.state, 0);
+    this.watchLoad();
     try {
       this.worker = new Worker('translate-worker.js', { type: 'module' });
     } catch (e) { this.fail('Браузер не поддерживает фоновые модули: ' + e.message); return; }
@@ -51,15 +61,17 @@ class Translator {
   }
   onMessage(m) {
     if (m.type === 'progress') {
+      this.watchLoad();
       const p = m.p;
       if (p && p.file && typeof p.total === 'number' && p.total > 0) {
         this.files.set(m.pair + '/' + p.file, { loaded: p.loaded || 0, total: p.total });
         let l = 0, t = 0;
         for (const f of this.files.values()) { l += f.loaded; t += f.total; }
-        this.onState('loading', t ? Math.min(99, Math.round((100 * l) / t)) : 0);
+        this.pct = t ? Math.min(99, Math.round((100 * l) / t)) : 0;
+        this.onState('loading', this.pct);
       }
     } else if (m.type === 'ready') {
-      this.state = 'ready'; this.restarts = 0; this.onState('ready', 100);
+      this.state = 'ready'; this.restarts = 0; this.pct = 100; this.watchLoad(); this.onState('ready', 100);
       for (const id of this.pending.keys()) this.arm(id);
     } else if (m.type === 'error') {
       this.fail(m.message);
@@ -72,7 +84,8 @@ class Translator {
     }
   }
   fail(msg) {
-    this.state = 'error'; this.onState('error', 0, msg);
+    this.state = 'error'; this.stalled = false; clearTimeout(this.stallTimer);
+    this.onState('error', 0, msg);
     for (const e of this.pending.values()) { clearTimeout(e.timer); e.reject(new Error(msg)); }
     this.pending.clear(); this.busy = 0;
   }
@@ -209,12 +222,28 @@ class Scribe {
 
 // ---------------------------------------------------------------- session
 const mt = new Translator((state, pct, msg) => {
-  $('mt').textContent = state === 'ready' ? 'Перевод: готов' : state === 'error' ? 'Перевод: ошибка' : 'Перевод: загрузка';
-  $('loadBanner').hidden = state !== 'loading';
+  $('mt').textContent = state === 'ready' ? 'Перевод: готов' : state === 'error' ? 'Перевод: ошибка'
+    : state === 'stalled' ? 'Перевод: загрузка не идёт' : 'Перевод: загрузка';
+  $('loadBanner').hidden = state !== 'loading' && state !== 'stalled';
   $('loadPct').textContent = String(pct); $('loadBar').style.width = pct + '%';
   if (state === 'error') showError('Модель перевода не загрузилась: ' + (msg || '') + '. Проверьте интернет и перезапустите.');
   else if (state === 'ready') clearError();
+  renderDiag();
+  if (S.running) renderAll();
 });
+
+// ---------------------------------------------------------------- diagnostics
+const DG = { partials: 0, commits: 0, lastPartialAt: 0 };
+
+function renderDiag() {
+  const { line, hint } = diagText({
+    mtState: mt.state, mtPct: mt.pct, mtStalled: mt.stalled, partials: DG.partials, commits: DG.commits,
+    msSincePartial: DG.lastPartialAt ? Date.now() - DG.lastPartialAt : 0, noCommitMs: NO_COMMIT_HINT_MS,
+  });
+  $('diag').textContent = line;
+  $('diagHint').textContent = hint; $('diagHint').hidden = !hint;
+}
+setInterval(() => { if (S.running) renderDiag(); }, 1000);
 
 let scribe = null, audioCtx = null, stream = null, node = null, wake = null;
 let autosaveTimer = null, commitWaiter = null, hiddenAt = 0, warnTimer = null;
@@ -278,6 +307,7 @@ async function start() {
   S.running = true; S.stopping = false; S.paused = false;
   S.phrases = []; S.partial = ''; S.partialTr = ''; S.startedAt = Date.now(); S.endedAt = 0;
   throttle.reset(); hiddenAt = 0;
+  DG.partials = 0; DG.commits = 0; DG.lastPartialAt = 0;
   $('live').classList.remove('ended'); $('fatalBtns').hidden = true; $('sum').classList.remove('on');
   updatePauseUi(); clearWarn();
   showScreen('live'); clearError(); applyPrefs(); renderAll();
@@ -402,6 +432,7 @@ function addPhrase(text) {
 function onScribeEvent(ev) {
   if (ev.type === 'partial') {
     if (S.stopping && !ev.text) return;
+    if (ev.text) { DG.partials++; DG.lastPartialAt = Date.now(); }
     S.partial = ev.text;
     S.partialLang = classify(ev.text);
     if (!ev.text) S.partialTr = '';
@@ -412,6 +443,7 @@ function onScribeEvent(ev) {
     }
   } else if (ev.type === 'committed') {
     const text = ev.text.trim();
+    if (text) DG.commits++;
     S.partial = ''; S.partialTr = ''; draftSeq++; throttle.reset();
     if (!text) renderDraft(); else addPhrase(text);
     if (commitWaiter) commitWaiter();
@@ -543,7 +575,7 @@ function renderList() {
     const a = el('article', 'ph ' + p.lang);
     a.append(el('div', 'tag', p.lang === 'ru' ? 'RU → EN' : 'EN → RU'));
     a.append(el('div', 'orig', p.text));
-    const tr = el('div', 'tr serif' + (p.tr ? '' : ' wait'), p.tr ?? (p.failed ? '— перевод не удался —' : 'перевожу…'));
+    const tr = el('div', 'tr serif' + (p.tr ? '' : ' wait'), p.tr ?? (p.failed ? '— перевод не удался —' : mtPendingText() || 'перевожу…'));
     a.append(tr);
     if (p.warnNum) a.append(el('div', 'numwarn', '⚠ проверьте цифры'));
     list.append(a);
@@ -551,11 +583,20 @@ function renderList() {
   if (nearBottom) list.scrollTop = list.scrollHeight;
 }
 
+/** Why a translation cannot appear yet; '' when the models are ready. */
+function mtPendingText() {
+  if (mt.state === 'error') return 'перевод недоступен';
+  if (mt.state === 'ready') return '';
+  if (mt.stalled) return 'загрузка перевода не идёт';
+  return mt.pct > 0 ? `загружается перевод, ${mt.pct}%` : 'загружается перевод…';
+}
+
 function renderDraft() {
   const d = $('draft'); d.textContent = '';
   if (S.partial) {
     d.append(el('div', 'orig', S.partial));
     if (S.partialTr) d.append(el('div', 'tr serif', S.partialTr));
+    else { const w = mtPendingText(); if (w) d.append(el('div', 'tr serif wait', w)); }
   }
   renderFace();
 }

@@ -77,6 +77,8 @@ details.card summary { cursor: pointer; font-weight: 600; }
 .small { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
 .linkbtn { color: var(--rec); text-decoration: underline; padding: 6px 0; font-size: 14px; }
 .live-note { font-size: 12px; color: var(--muted); margin: 0 0 6px; }
+.diag { font-size: 12px; color: var(--muted); margin: 0 0 6px; }
+.diag.bad { color: var(--rec); font-weight: 600; }
 .ended .dock .stop, .ended .dock #bPause { display: none; }
 .modal { display: none; position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.45); align-items: center; justify-content: center; padding: 16px; }
 .modal.on { display: flex; }
@@ -162,7 +164,7 @@ pre { white-space: pre-wrap; font: inherit; background: var(--card); border: 1px
 
   <p class="note">
     Звук с микрофона отправляется в ElevenLabs для распознавания речи. Перевод выполняется прямо на этом устройстве.
-    При первом запуске скачивается модель перевода (около 150 МБ), нужен Wi-Fi.
+    При первом запуске скачивается модель перевода (около 240 МБ), нужен Wi-Fi. Загрузка может занять несколько минут: не сворачивайте приложение.
     Разрешите доступ к микрофону, когда браузер попросит.
   </p>
   <p class="note"><b>Это демо.</b> Не используйте его для конфиденциальных встреч: речь обрабатывается в облаке ElevenLabs.
@@ -175,6 +177,8 @@ pre { white-space: pre-wrap; font: inherit; background: var(--card); border: 1px
     <span class="grow"></span>
     <span class="pill" id="mt">Перевод: загрузка</span>
   </div>
+  <p class="diag" id="diag"></p>
+  <p class="diag bad" id="diagHint" hidden></p>
   <div class="banner" id="loadBanner" hidden>Загружается модель перевода: <span id="loadPct">0</span>%<div class="bar"><i id="loadBar"></i></div></div>
   <div class="banner bad" id="errBanner" hidden><span id="errText"></span>
     <div id="fatalBtns" hidden><button id="bRestart">Начать заново</button><button id="bFatalSum">Показать итог</button></div></div>

@@ -1,5 +1,5 @@
 // Caches the app shell so the page opens without a network; models are cached by transformers.js (Cache API).
-const CACHE = 'wr-shell-v2';
+const CACHE = 'wr-shell-v3';
 const SHELL = ['./', 'index.html', 'app.js', 'lib.js', 'pcm-worklet.js', 'translate-worker.js', 'manifest.webmanifest', 'sw.js', 'icon-180.png', 'icon-512.png'];
 const NET_TIMEOUT_MS = 4000;
 
