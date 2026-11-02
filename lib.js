@@ -108,6 +108,11 @@ export function audioChunkMessage(base64, sampleRate = 16000, commit = false) {
   return JSON.stringify({ message_type: 'input_audio_chunk', audio_base_64: base64, commit, sample_rate: sampleRate });
 }
 
+/** iPhone/iPad (iPadOS reports itself as a Mac with a touch screen): Safari kills a page that holds too much memory. */
+export function isLowMemoryDevice(userAgent, platform, maxTouchPoints) {
+  return /iPad|iPhone|iPod/.test(userAgent) || (platform === 'MacIntel' && maxTouchPoints > 1);
+}
+
 /** On-screen diagnostics of a live session: one status line and, when something looks wrong, the likely cause. */
 export function diagText({ mtState, mtPct = 0, mtStalled = false, partials = 0, commits = 0, msSincePartial = 0, noCommitMs = 5000 }) {
   const mt = mtState === 'ready' ? 'готов'

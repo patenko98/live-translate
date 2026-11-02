@@ -1,7 +1,7 @@
 import {
   classify, opposite, splitSentences, parseEvent, wsUrl, audioChunkMessage, httpError, networkError,
   TOKEN_URL, PartialThrottle,
-  cleanTranslation, missingNumbers, parseGlossary, glossaryPre, glossaryRestore, glossaryPost, diagText,
+  cleanTranslation, missingNumbers, parseGlossary, glossaryPre, glossaryRestore, glossaryPost, diagText, isLowMemoryDevice,
 } from './lib.js';
 
 const $ = (id) => document.getElementById(id);
@@ -19,7 +19,10 @@ const LANG_NAME = { ru: 'Русский', en: 'English' };
 const MAX_BUFFER_CHUNKS = 50; // 5 s of audio replayed after a reconnect
 const BACKOFF_MS = [500, 1000, 2000, 4000, 8000];
 const TOKEN_TIMEOUT_MS = 10000;
-const MT_TIMEOUT_PER_SENTENCE_MS = 20000;
+const LOW_MEMORY = isLowMemoryDevice(navigator.userAgent, navigator.platform, navigator.maxTouchPoints)
+  || new URLSearchParams(location.search).get('lowmem') === '1';
+// With one model in memory, a change of language first loads the other model.
+const MT_TIMEOUT_PER_SENTENCE_MS = LOW_MEMORY ? 60000 : 20000;
 const MT_STALL_MS = 60000; // no sign of life from the model loader
 const NO_COMMIT_HINT_MS = 5000;
 const COMMIT_WAIT_MS = 1500;
@@ -57,7 +60,7 @@ class Translator {
     } catch (e) { this.fail('Браузер не поддерживает фоновые модули: ' + e.message); return; }
     this.worker.onerror = (e) => this.fail(e.message || 'ошибка модуля перевода');
     this.worker.onmessage = (e) => this.onMessage(e.data);
-    this.worker.postMessage({ type: 'init' });
+    this.worker.postMessage({ type: 'init', lowMemory: LOW_MEMORY });
   }
   onMessage(m) {
     if (m.type === 'progress') {
